@@ -16,7 +16,7 @@ TIMEOUT = "12h"
 # sids for rules
 POOR_REPUTATION_SIDS = list(range(2403300, 2403599))
 
-# files
+# files!
 EVE_FILE = "/var/log/suricata/eve.json"
 STATE_FILE = "/var/lib/suricata/poor_rep.state"
 LOG_FILE = "/var/log/suricata/poor_rep_block.log"
