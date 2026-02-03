@@ -28,10 +28,10 @@ EVE_FILE = "/var/log/suricata/eve.json"
 STATE_FILE = "/var/lib/suricata/poor_rep.state"
 LOG_FILE = "/var/log/suricata/poor_rep_block.log"
 
-# Интервал проверки (секунды)
+# interval
 CHECK_INTERVAL = 30
 
-# ========== ЛОГИРОВАНИЕ ==========
+# logs
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -42,8 +42,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ========== MIKROTIK ФУНКЦИИ ==========
-
+# MIKROTIK
 class MikroTikManager:
     def __init__(self):
         self.api = None
@@ -57,6 +56,7 @@ class MikroTikManager:
                 host=MIKROTIK_IP,
                 port=8728,
                 timeout=30
+                encoding= 'utf-8'
             )
             logger.info("MikroTik подключен")
             return True
