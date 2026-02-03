@@ -127,8 +127,6 @@ class MikroTikManager:
 
             if dest_ip != "N/A":
                 comment += f" - Target:{dest_ip}"
-            
-            comment += f" - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
             address_list = self.api.path('/ip/firewall/address-list')
             
