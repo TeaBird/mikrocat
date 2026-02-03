@@ -10,28 +10,30 @@ from librouteros import connect
 MIKROTIK_IP = "192.168.9.10"
 USERNAME = "" #winbox_username
 PASSWORD = "" #winbox_password
-ADDRESS_LIST = "suricata_poor_reputation"
-TIMEOUT = "12h"
+# address_lists - исправлены опечатки
+ADDRESS_LIST_POOR_REP = "suricata_poor_reputation"
+ADDRESS_LIST_SCAN = "suricata_port_scan"
+ADDRESS_LIST_EXPLOIT = "suricata_exploit"
 
-# Poor Reputation SID
+TEST_TIMEOUT = 60
 POOR_REPUTATION_SIDS = list(range(2403300, 2403599))
- 
-# SYN SCAN -sS sid:3400001 sid:3400002
-# SYN-ACK 3-WAY SCAN -sT sid:3400003
-# ACK SCAN -sA sid:3400004
-# CHRISTMAS TREE SCAN -sX sid:3400005
-# FRAGMENTED SCAN -f sid:3400006
-# UDP SCAN -sU sid:3400007 sid:3400008
-# POSSBL SCAN SHELL M-SPLOIT TCP sid:3400020 sid:3400021 
+SYN_SCAN_SIDS = [3400001, 3400002]
+SYN_ACK_SCAN_SIDS = [3400003]
+ACK_SCAN_SIDS = [3400004]
+XMAS_SCAN_SIDS = [3400005]
+FRAGMENTED_SCAN_SIDS = [3400006]
+UDP_SCAN_SIDS = [3400007, 3400008]
+EXPLOIT_SIDS = [3400020, 3400021]
+ALL_SCAN_SIDS = (SYN_SCAN_SIDS + SYN_ACK_SCAN_SIDS + 
+                 ACK_SCAN_SIDS + XMAS_SCAN_SIDS + 
+                 FRAGMENTED_SCAN_SIDS + UDP_SCAN_SIDS)
 
 EVE_FILE = "/var/log/suricata/eve.json"
-STATE_FILE = "/var/lib/suricata/poor_rep.state"
-LOG_FILE = "/var/log/suricata/poor_rep_block.log"
+STATE_FILE = "/var/lib/suricata/ip_blocker.state"
+LOG_FILE = "/var/log/suricata/ip_blocker.log"
 
-# interval
 CHECK_INTERVAL = 30
 
-# logs
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -42,7 +44,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# MIKROTIK
+# mikrotik
 class MikroTikManager:
     def __init__(self):
         self.api = None
@@ -55,8 +57,8 @@ class MikroTikManager:
                 password=PASSWORD,
                 host=MIKROTIK_IP,
                 port=8728,
-                timeout=30
-                encoding= 'utf-8'
+                timeout=30,
+                encoding='utf-8'
             )
             logger.info("MikroTik подключен")
             return True
@@ -65,98 +67,128 @@ class MikroTikManager:
             return False
 
     def ensure_connection(self):
-        """Убедиться что соединение активно"""
         if self.api is None:
             return self.connect()
         return True
 
-    def ensure_address_list(self):
-        """Простая проверка - пробуем добавить тестовый IP"""
+    def ensure_address_lists(self):
         try:
             if not self.ensure_connection():
                 return False
-
-            comment = f"Test entry - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+          
             address_list = self.api.path('/ip/firewall/address-list')
 
-            # Просто пробуем добавить (если уже есть - ошибка нас устраивает)
-            try:
-                address_list.add(
-                    list=ADDRESS_LIST,
-                    address="200.91.236.125",
-                    comment=comment,
-                    timeout=50
-                )
-                logger.info(f"Создан список '{ADDRESS_LIST}'")
-            except Exception as e:
-                if "already have" in str(e):
-                    logger.info(f"Список '{ADDRESS_LIST}' уже существует")
-                else:
-                    raise e
+            lists_to_check = [
+                ADDRESS_LIST_POOR_REP,
+                ADDRESS_LIST_SCAN,
+                ADDRESS_LIST_EXPLOIT
+            ]
+            
+            for list_name in lists_to_check:
+                test_ip = "200.91.236.125"
+                comment = f"Test entry"
+                
+                try:
+                    address_list.add(
+                        list=list_name,
+                        address=test_ip,
+                        comment=comment,
+                        timeout=TEST_TIMEOUT
+                    )
+                    logger.info(f"Создан список '{list_name}'")
+                    time.sleep(1)
+                    
+                except Exception as e:
+                    if "already have" in str(e).lower():
+                        logger.info(f"Список '{list_name}' уже существует")
+                    else:
+                        logger.warning(f"Предупреждение для списка '{list_name}': {e}")
 
             return True
         except Exception as e:
-            logger.error(f"Ошибка работы со списком: {e}")
+            logger.error(f"Ошибка создания списков: {e}")
             return False
 
-    def add_ip(self, ip, dest_ip="N/A", sid=""):
-        """Добавить IP в список"""
+    def add_ip(self, ip, list_type, dest_ip="N/A", sid="", scan_type=""):
         try:
-            comment = f"Poor Reputation IP - SID:{sid} - Target:{dest_ip} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            # определяем в какой список добавить
+            if list_type == "poor_rep":
+                list_name = ADDRESS_LIST_POOR_REP
+                comment = f"Poor Reputation IP - SID:{sid}"
+            elif list_type == "scan":
+                list_name = ADDRESS_LIST_SCAN
+                comment = f"Port Scan - {scan_type} - SID:{sid}"
+            elif list_type == "exploit":
+                list_name = ADDRESS_LIST_EXPLOIT
+                comment = f"Possible Exploit/Shell - SID:{sid}"
+            else:
+                logger.error(f"Неизвестный тип списка: {list_type}")
+                return False
+
+            if dest_ip != "N/A":
+                comment += f" - Target:{dest_ip}"
+            
+            comment += f" - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
             address_list = self.api.path('/ip/firewall/address-list')
+            
             address_list.add(
-                list=ADDRESS_LIST,
+                list=list_name,
                 address=ip,
-                comment=comment,
-                timeout=43200
+                comment=comment
             )
 
-            logger.info(f"Добавлен: {ip} (Dest_ip: {dest_ip}, SID:{sid})")
+            logger.info(f"Добавлен {ip} в список '{list_name}' навсегда (SID:{sid})")
             return True
 
         except Exception as e:
             error_msg = str(e)
-            if "already have such entry" in error_msg:
-                logger.debug(f"IP {ip} уже в списке")
+            if "already have such entry" in error_msg.lower():
+                logger.debug(f"IP {ip} уже в списке '{list_name}'")
                 return True
             else:
-                logger.error(f"Ошибка добавления {ip}: {error_msg}")
-
-                # Переподключение при ошибке
-                if "connection" in error_msg.lower():
-                    self.connect()
+                logger.error(f"Ошибка добавления {ip} в '{list_name}': {error_msg}")
                 return False
 
-    def get_blocked_ips(self):
-        """Получить список заблокированных IP"""
+    def get_blocked_counts(self):
+        counts = {
+            'poor_rep': 0,
+            'scan': 0,
+            'exploit': 0
+        }
         try:
             if not self.ensure_connection():
-                return []
+                return counts
 
             address_list = self.api.path('/ip/firewall/address-list')
-            blocked = []
-
+            
             for item in address_list:
-                if item.get('list') == ADDRESS_LIST:
-                    blocked.append({
-                        'address': item.get('address'),
-                        'comment': item.get('comment', '')
-                    })
+                list_name = item.get('list', '')
+                if list_name == ADDRESS_LIST_POOR_REP:
+                    counts['poor_rep'] += 1
+                elif list_name == ADDRESS_LIST_SCAN:
+                    counts['scan'] += 1
+                elif list_name == ADDRESS_LIST_EXPLOIT:
+                    counts['exploit'] += 1
 
-            return blocked
         except Exception as e:
-            logger.error(f"Ошибка получения списка: {e}")
-            return []
+            logger.warning(f"Не удалось получить статистику: {str(e)[:100]}")
+            
+        return counts
 
-# ========== SURICATA ФУНКЦИИ ==========
+    def get_blocked_ips(self):
+        """Старый метод для обратной совместимости"""
+        counts = self.get_blocked_counts()
+        total = sum(counts.values())
+        return [{}] * total
 
+# suricata
 def is_external_ip(ip):
-    """Проверить что IP внешний (не локальный)"""
+    # проверка, что ip внешний
     if not ip:
         return False
 
-    # Локальные диапазоны
+    # локальные диапазоны
     local_prefixes = [
         '192.168.',
         '10.',
@@ -165,9 +197,9 @@ def is_external_ip(ip):
         '172.20.', '172.21.', '172.22.', '172.23.',
         '172.24.', '172.25.', '172.26.', '172.27.',
         '172.28.', '172.29.', '172.30.', '172.31.',
-        '169.254.',  # Link-local
-        '224.', '225.', '226.', '227.', '228.', '229.', '230.', '231.', '232.', '233.', '234.', '235.', '236.', '237.', '238.', '239.',  # Multicast
-        '255.255.255.255',  # Broadcast
+        '169.254.',
+        '224.', '225.', '226.', '227.', '228.', '229.', '230.', '231.', '232.', '233.', '234.', '235.', '236.', '237.', '238.', '239.',
+        '255.255.255.255',
     ]
 
     for prefix in local_prefixes:
@@ -195,7 +227,6 @@ def save_position(position, state_file):
 
 def find_eve_file():
     """Найти файл eve.json"""
-    # Альтернативные пути для поиска
     alt_paths = [
         "/var/log/suricata/eve.json",
         "/root/NDR/config/containers-data/suricata/logs/eve.json",
@@ -204,18 +235,36 @@ def find_eve_file():
         "/tmp/suricata/eve.json"
     ]
 
-    # Проверяем основной путь
     if os.path.exists(EVE_FILE):
         return EVE_FILE
 
-    # Ищем в альтернативных путях
     for path in alt_paths:
         if os.path.exists(path):
             logger.info(f"Найден альтернативный путь к логам: {path}")
             return path
 
-    # Если не нашли, возвращаем основной (будет ошибка при попытке чтения)
     return EVE_FILE
+
+def determine_alert_type(sid):
+    """Определить тип алерта по SID"""
+    if sid in POOR_REPUTATION_SIDS:
+        return "poor_rep", "Poor Reputation"
+    elif sid in SYN_SCAN_SIDS:
+        return "scan", "SYN Scan"
+    elif sid in SYN_ACK_SCAN_SIDS:
+        return "scan", "SYN-ACK Scan"
+    elif sid in ACK_SCAN_SIDS:
+        return "scan", "ACK Scan"
+    elif sid in XMAS_SCAN_SIDS:
+        return "scan", "XMAS Scan"
+    elif sid in FRAGMENTED_SCAN_SIDS:
+        return "scan", "Fragmented Scan"
+    elif sid in UDP_SCAN_SIDS:
+        return "scan", "UDP Scan"
+    elif sid in EXPLOIT_SIDS:
+        return "exploit", "Possible Exploit/Shell"
+    else:
+        return None, None
 
 def process_alerts(mikrotik, eve_file, state_file):
     try:
@@ -226,18 +275,16 @@ def process_alerts(mikrotik, eve_file, state_file):
         last_pos = read_last_position(state_file)
         current_size = os.path.getsize(eve_file)
 
-        # Если файл уменьшился (ротация логов)
         if current_size < last_pos:
             last_pos = 0
 
         if current_size <= last_pos:
-            # Нет новых данных
             return 0
 
         logger.debug(f"Чтение лога с позиции {last_pos} до {current_size}")
 
         processed_count = 0
-        found_ips = []  # Список для хранения найденных IP и SID
+        found_alerts = []  # (ip, dest_ip, sid, list_type, alert_type)
 
         with open(eve_file, 'r', encoding='utf-8', errors='ignore') as f:
             f.seek(last_pos)
@@ -250,22 +297,19 @@ def process_alerts(mikrotik, eve_file, state_file):
                 try:
                     event = json.loads(line)
 
-                    # Проверяем что это alert
                     if event.get('event_type') == 'alert':
                         alert = event.get('alert', {})
                         sid = alert.get('signature_id')
                         src_ip = event.get('src_ip')
                         dest_ip = event.get('dest_ip', 'N/A')
-
-                        # Проверяем Poor Reputation SID
-                    dest_ip = event.get('dest_ip', 'N/A') #для комментария с dest.ip
-                    if sid in POOR_REPUTATION_SIDS and src_ip:
-                            # Проверяем что IP внешний
-                            if is_external_ip(src_ip):
-                                # Проверяем, нет ли уже этого IP в списке
-                                if (src_ip, dest_ip, sid) not in found_ips:
-                                    found_ips.append((src_ip, dest_ip, sid))
-                                    logger.info(f"Найден Poor Reputation: {src_ip} (SID:{sid})")
+                        
+                        if sid and src_ip and is_external_ip(src_ip):
+                            list_type, alert_type = determine_alert_type(sid)
+                            
+                            if list_type:
+                                if (src_ip, dest_ip, sid, list_type, alert_type) not in found_alerts:
+                                    found_alerts.append((src_ip, dest_ip, sid, list_type, alert_type))
+                                    logger.info(f"Найдено: {src_ip} - {alert_type} (SID:{sid})")
 
                 except json.JSONDecodeError as e:
                     logger.debug(f"Ошибка JSON в строке {line_num}: {e}")
@@ -274,17 +318,15 @@ def process_alerts(mikrotik, eve_file, state_file):
                     logger.debug(f"Ошибка обработки строки {line_num}: {e}")
                     continue
 
-        # Добавляем найденные IP в MikroTik
-        for src_ip, dest_ip, sid in found_ips:
-            if mikrotik.add_ip(src_ip, dest_ip, sid):
+        for src_ip, dest_ip, sid, list_type, alert_type in found_alerts:
+            if mikrotik.add_ip(src_ip, list_type, dest_ip, sid, alert_type):
                 processed_count += 1
-                time.sleep(0.1)  # Пауза между запросами
+                time.sleep(0.1)
 
-        # Сохраняем новую позицию
         save_position(current_size, state_file)
 
         if processed_count > 0:
-            logger.info(f"Добавлено {processed_count} новых IP")
+            logger.info(f"Добавлено {processed_count} новых IP в списки блокировки")
 
         return processed_count
 
@@ -294,20 +336,26 @@ def process_alerts(mikrotik, eve_file, state_file):
         logger.debug(traceback.format_exc())
         return 0
 
-# ========== ОСНОВНАЯ ПРОГРАММА ==========
-
+# main
 def main():
     """Основная функция"""
     print("\n" + "="*60)
-    print("🚀 SURICATA POOR REPUTATION IP BLOCKER")
+    print("🚀 SURICATA ADVANCED IP BLOCKER")
     print("="*60)
     print(f"MikroTik: {MIKROTIK_IP}")
-    print(f"Address List: {ADDRESS_LIST}")
-    print(f"Правил Poor Reputation: {len(POOR_REPUTATION_SIDS)}")
+    print(f"Списки блокировки (навсегда):")
+    print(f"  • {ADDRESS_LIST_POOR_REP} - IP с плохой репутацией")
+    print(f"  • {ADDRESS_LIST_SCAN} - Сканирование портов")
+    print(f"  • {ADDRESS_LIST_EXPLOIT} - Возможные эксплойты")
+    print("="*60)
+    print(f"Отслеживаемые SID:")
+    print(f"  • Poor Reputation: {len(POOR_REPUTATION_SIDS)} правил")
+    print(f"  • Port Scanning: {len(ALL_SCAN_SIDS)} типов сканирования")
+    print(f"  • Exploits: {len(EXPLOIT_SIDS)} правил")
+    print("="*60)
     print(f"Лог файл: {LOG_FILE}")
     print("="*60 + "\n")
 
-    # Инициализация MikroTik
     logger.info("Инициализация MikroTik...")
     mikrotik = MikroTikManager()
 
@@ -315,33 +363,31 @@ def main():
         logger.error("Не удалось подключиться к MikroTik")
         sys.exit(1)
 
-    # Создание/проверка списка
-    logger.info("Проверка address list...")
-    if not mikrotik.ensure_address_list():
-        logger.warning("Проблемы со списком, но продолжаем...")
+    logger.info("Проверка и создание списков адресов...")
+    if not mikrotik.ensure_address_lists():
+        logger.warning("Проблемы со списками, но продолжаем...")
 
-    # Показываем текущие заблокированные IP
-    blocked = mikrotik.get_blocked_ips()
-    logger.info(f"Текущее количество заблокированных IP: {len(blocked)}")
+    counts = mikrotik.get_blocked_counts()
+    logger.info("Текущая статистика блокировок:")
+    logger.info(f"  • {ADDRESS_LIST_POOR_REP}: {counts['poor_rep']} IP")
+    logger.info(f"  • {ADDRESS_LIST_SCAN}: {counts['scan']} IP")
+    logger.info(f"  • {ADDRESS_LIST_EXPLOIT}: {counts['exploit']} IP")
+    total = sum(counts.values())
+    logger.info(f"  Всего заблокировано: {total} IP")
 
-    # Находим файл логов
     eve_file = find_eve_file()
     logger.info(f"Использую файл логов: {eve_file}")
 
     if not os.path.exists(eve_file):
         logger.error(f"Файл логов не найден: {eve_file}")
         logger.info("Проверьте что Suricata запущена и пишет логи")
-        logger.info("Альтернативные пути проверены, файл не найден")
-        # Не выходим, продолжаем в надежде что файл появится
 
     logger.info(f"Начинаю мониторинг файла: {eve_file}")
     logger.info(f"Интервал проверки: {CHECK_INTERVAL} секунд")
     logger.info("Для остановки нажмите Ctrl+C\n")
 
-    # Счетчик для периодического вывода статуса
     status_counter = 0
 
-    # Основной цикл
     try:
         while True:
             try:
@@ -349,15 +395,18 @@ def main():
 
                 status_counter += 1
 
-                # Периодически показываем статус
-                if status_counter % 20 == 0:  # Каждые 20 циклов
-                    blocked = mikrotik.get_blocked_ips()
-                    logger.info(f"Статус: {len(blocked)} IP в списке блокировки")
+                if status_counter % 20 == 0:
+                    counts = mikrotik.get_blocked_counts()
+                    logger.info("Статус блокировок:")
+                    logger.info(f"  • {ADDRESS_LIST_POOR_REP}: {counts['poor_rep']} IP")
+                    logger.info(f"  • {ADDRESS_LIST_SCAN}: {counts['scan']} IP")
+                    logger.info(f"  • {ADDRESS_LIST_EXPLOIT}: {counts['exploit']} IP")
+                    total = sum(counts.values())
+                    logger.info(f"  Всего: {total} IP")
 
-                    # Проверяем что файл логов существует
                     if not os.path.exists(eve_file):
                         logger.warning(f"Файл логов пропал: {eve_file}")
-                        eve_file = find_eve_file()  # Пробуем найти снова
+                        eve_file = find_eve_file() 
                         if os.path.exists(eve_file):
                             logger.info(f"Файл найден: {eve_file}")
 
@@ -368,10 +417,9 @@ def main():
                 break
             except Exception as e:
                 logger.error(f"Ошибка в основном цикле: {e}")
-                time.sleep(60)  # Пауза при ошибке
+                time.sleep(60)
 
     finally:
-        # Закрытие соединения
         if mikrotik.api:
             try:
                 mikrotik.api.close()
