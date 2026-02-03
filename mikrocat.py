@@ -6,25 +6,44 @@ import logging
 from datetime import datetime
 from librouteros import connect
 
-# configuration
+#config
 MIKROTIK_IP = "192.168.9.10"
-USERNAME = "" # задавать только переменными окружения
-PASSWORD = "" # задавать только переменными окружения
+USERNAME = "" #winbox_username
+PASSWORD = "" #winbox_password
 ADDRESS_LIST = "suricata_poor_reputation"
 TIMEOUT = "12h"
 
-# sids for rules
+# Poor Reputation SID
 POOR_REPUTATION_SIDS = list(range(2403300, 2403599))
+ 
+# SYN SCAN -sS sid:3400001 sid:3400002
+# SYN-ACK 3-WAY SCAN -sT sid:3400003
+# ACK SCAN -sA sid:3400004
+# CHRISTMAS TREE SCAN -sX sid:3400005
+# FRAGMENTED SCAN -f sid:3400006
+# UDP SCAN -sU sid:3400007 sid:3400008
+# POSSBL SCAN SHELL M-SPLOIT TCP sid:3400020 sid:3400021 
 
-# files!!
 EVE_FILE = "/var/log/suricata/eve.json"
 STATE_FILE = "/var/lib/suricata/poor_rep.state"
 LOG_FILE = "/var/log/suricata/poor_rep_block.log"
 
-# check_interval
+# Интервал проверки (секунды)
 CHECK_INTERVAL = 30
 
-# mikrotik_functions
+# ========== ЛОГИРОВАНИЕ ==========
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ========== MIKROTIK ФУНКЦИИ ==========
+
 class MikroTikManager:
     def __init__(self):
         self.api = None
@@ -60,7 +79,7 @@ class MikroTikManager:
             comment = f"Test entry - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             address_list = self.api.path('/ip/firewall/address-list')
 
-            # try to add adress
+            # Просто пробуем добавить (если уже есть - ошибка нас устраивает)
             try:
                 address_list.add(
                     list=ADDRESS_LIST,
@@ -130,7 +149,7 @@ class MikroTikManager:
             logger.error(f"Ошибка получения списка: {e}")
             return []
 
-# suricata functions
+# ========== SURICATA ФУНКЦИИ ==========
 
 def is_external_ip(ip):
     """Проверить что IP внешний (не локальный)"""
@@ -158,7 +177,6 @@ def is_external_ip(ip):
     return True
 
 def read_last_position(state_file):
-    """Прочитать последнюю позицию в файле"""
     if os.path.exists(state_file):
         try:
             with open(state_file, 'r') as f:
@@ -168,7 +186,6 @@ def read_last_position(state_file):
     return 0
 
 def save_position(position, state_file):
-    """Сохранить позицию в файле"""
     try:
         os.makedirs(os.path.dirname(state_file), exist_ok=True)
         with open(state_file, 'w') as f:
@@ -201,7 +218,6 @@ def find_eve_file():
     return EVE_FILE
 
 def process_alerts(mikrotik, eve_file, state_file):
-    """Обработать новые алерты"""
     try:
         if not os.path.exists(eve_file):
             logger.warning(f"Файл {eve_file} не найден")
@@ -278,12 +294,12 @@ def process_alerts(mikrotik, eve_file, state_file):
         logger.debug(traceback.format_exc())
         return 0
 
-# main
+# ========== ОСНОВНАЯ ПРОГРАММА ==========
 
 def main():
     """Основная функция"""
     print("\n" + "="*60)
-    print(" SURICATA POOR REPUTATION IP BLOCKER")
+    print("🚀 SURICATA POOR REPUTATION IP BLOCKER")
     print("="*60)
     print(f"MikroTik: {MIKROTIK_IP}")
     print(f"Address List: {ADDRESS_LIST}")
