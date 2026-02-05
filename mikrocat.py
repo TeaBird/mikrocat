@@ -10,7 +10,7 @@ from librouteros import connect
 MIKROTIK_IP = "192.168.9.10"
 USERNAME = "" #winbox_username
 PASSWORD = "" #winbox_password
-# address_lists - исправлены опечатки
+
 ADDRESS_LIST_POOR_REP = "suricata_poor_reputation"
 ADDRESS_LIST_SCAN = "suricata_port_scan"
 ADDRESS_LIST_EXPLOIT = "suricata_exploit"
@@ -58,7 +58,7 @@ class MikroTikManager:
                 host=MIKROTIK_IP,
                 port=8728,
                 timeout=30,
-                encoding='utf-8'
+                encoding='latin-1'
             )
             logger.info("MikroTik подключен")
             return True
@@ -160,8 +160,26 @@ class MikroTikManager:
 
             address_list = self.api.path('/ip/firewall/address-list')
             
-            for item in address_list:
+            # Безопасное получение данных
+            try:
+                items = list(address_list)
+            except Exception as api_error:
+                # Ловим ошибку кодировки здесь
+                error_msg = str(api_error)
+                # Безопасное логирование ошибки
+                safe_error = error_msg.encode('utf-8', errors='replace').decode('utf-8')
+                logger.warning(f"Ошибка API при получении списков: {safe_error[:200]}")
+                return counts
+            
+            for item in items:
                 list_name = item.get('list', '')
+                # Безопасное преобразование
+                if isinstance(list_name, bytes):
+                    try:
+                        list_name = list_name.decode('utf-8')
+                    except UnicodeDecodeError:
+                        list_name = list_name.decode('latin-1', errors='ignore')
+                
                 if list_name == ADDRESS_LIST_POOR_REP:
                     counts['poor_rep'] += 1
                 elif list_name == ADDRESS_LIST_SCAN:
@@ -170,8 +188,11 @@ class MikroTikManager:
                     counts['exploit'] += 1
 
         except Exception as e:
-            logger.warning(f"Не удалось получить статистику: {str(e)[:100]}")
-            
+            # БЕЗОПАСНОЕ логирование ошибки
+            error_str = str(e)
+            safe_error = error_str.encode('utf-8', errors='replace').decode('utf-8')
+            logger.warning(f"Не удалось получить статистику: {safe_error[:200]}")
+
         return counts
 
     def get_blocked_ips(self):
@@ -266,36 +287,59 @@ def determine_alert_type(sid):
 
 def process_alerts(mikrotik, eve_file, state_file):
     try:
+        logger.info("=== НАЧАЛО process_alerts ===")
+        
         if not os.path.exists(eve_file):
             logger.warning(f"Файл {eve_file} не найден")
             return 0
 
         last_pos = read_last_position(state_file)
         current_size = os.path.getsize(eve_file)
-
+        
+        logger.info(f"Позиция: {last_pos}, Размер: {current_size}")
+        
+        # Если файл уменьшился (ротация)
         if current_size < last_pos:
+            logger.info("Ротация логов, сбрасываю позицию")
             last_pos = 0
 
+        # Если нет новых данных
         if current_size <= last_pos:
+            logger.info("Нет новых данных")
             return 0
 
-        logger.debug(f"Чтение лога с позиции {last_pos} до {current_size}")
+        # ВАЖНО: Ограничим количество читаемых данных за один цикл
+        MAX_BYTES_PER_CYCLE = 10 * 1024 * 1024  # 10 MB максимум за цикл
+        
+        bytes_to_read = min(current_size - last_pos, MAX_BYTES_PER_CYCLE)
+        logger.info(f"Буду читать: {bytes_to_read} байт (макс {MAX_BYTES_PER_CYCLE})")
 
         processed_count = 0
-        found_alerts = []  # (ip, dest_ip, sid, list_type, alert_type)
+        bytes_read = 0
+        line_count = 0
+        alerts_found = 0
 
         with open(eve_file, 'r', encoding='utf-8', errors='ignore') as f:
             f.seek(last_pos)
-
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-                if not line:
-                    continue
-
+            
+            # Читаем только до лимита
+            while bytes_read < bytes_to_read:
+                line = f.readline()
+                if not line:  # Конец файла
+                    break
+                    
+                bytes_read += len(line)
+                line_count += 1
+                
+                # Лимит строк за цикл
+                if line_count > 5000:
+                    logger.info(f"Достигнут лимит 5000 строк за цикл")
+                    break
+                
                 try:
-                    event = json.loads(line)
-
+                    event = json.loads(line.strip())
                     if event.get('event_type') == 'alert':
+                        alerts_found += 1
                         alert = event.get('alert', {})
                         sid = alert.get('signature_id')
                         src_ip = event.get('src_ip')
@@ -303,37 +347,38 @@ def process_alerts(mikrotik, eve_file, state_file):
                         
                         if sid and src_ip and is_external_ip(src_ip):
                             list_type, alert_type = determine_alert_type(sid)
-                            
                             if list_type:
-                                if (src_ip, dest_ip, sid, list_type, alert_type) not in found_alerts:
-                                    found_alerts.append((src_ip, dest_ip, sid, list_type, alert_type))
-                                    logger.info(f"Найдено: {src_ip} - {alert_type} (SID:{sid})")
-
-                except json.JSONDecodeError as e:
-                    logger.debug(f"Ошибка JSON в строке {line_num}: {e}")
+                                logger.info(f"Найден: {src_ip} - {alert_type} (SID:{sid})")
+                                if mikrotik.add_ip(src_ip, list_type, dest_ip, sid, alert_type):
+                                    processed_count += 1
+                                    time.sleep(0.05)
+                                    
+                except json.JSONDecodeError:
                     continue
                 except Exception as e:
-                    logger.debug(f"Ошибка обработки строки {line_num}: {e}")
+                    logger.debug(f"Ошибка обработки строки: {e}")
                     continue
-
-        for src_ip, dest_ip, sid, list_type, alert_type in found_alerts:
-            if mikrotik.add_ip(src_ip, list_type, dest_ip, sid, alert_type):
-                processed_count += 1
-                time.sleep(0.1)
-
-        save_position(current_size, state_file)
-
+        
+        # Сохраняем новую позицию
+        if bytes_read > 0:
+            new_position = last_pos + bytes_read
+            save_position(new_position, state_file)
+            logger.info(f"Прочитано: {bytes_read} байт, {line_count} строк")
+            logger.info(f"Найдено алертов: {alerts_found}, Заблокировано: {processed_count}")
+        else:
+            logger.info("Не прочитано ни одного байта")
+        
         if processed_count > 0:
             logger.info(f"Добавлено {processed_count} новых IP в списки блокировки")
-
+        
+        logger.info("=== КОНЕЦ process_alerts ===")
         return processed_count
 
     except Exception as e:
         logger.error(f"Ошибка обработки алертов: {e}")
         import traceback
-        logger.debug(traceback.format_exc())
+        logger.error(traceback.format_exc())
         return 0
-
 # main
 def main():
     """Основная функция"""
