@@ -7,7 +7,7 @@ from datetime import datetime
 from librouteros import connect
 
 #config
-MIKROTIK_IP = "192.168.9.10"
+MIKROTIK_IP = ""
 USERNAME = "suricat" #winbox_username
 PASSWORD = "Qq1234567!" #winbox_password
 
