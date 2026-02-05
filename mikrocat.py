@@ -8,8 +8,8 @@ from librouteros import connect
 
 #config
 MIKROTIK_IP = "192.168.9.10"
-USERNAME = "" #winbox_username
-PASSWORD = "" #winbox_password
+USERNAME = "suricat" #winbox_username
+PASSWORD = "Qq1234567!" #winbox_password
 
 ADDRESS_LIST_POOR_REP = "suricata_poor_reputation"
 ADDRESS_LIST_SCAN = "suricata_port_scan"
@@ -24,8 +24,8 @@ XMAS_SCAN_SIDS = [3400005]
 FRAGMENTED_SCAN_SIDS = [3400006]
 UDP_SCAN_SIDS = [3400007, 3400008]
 EXPLOIT_SIDS = [3400020, 3400021]
-ALL_SCAN_SIDS = (SYN_SCAN_SIDS + SYN_ACK_SCAN_SIDS + 
-                 ACK_SCAN_SIDS + XMAS_SCAN_SIDS + 
+ALL_SCAN_SIDS = (SYN_SCAN_SIDS + SYN_ACK_SCAN_SIDS +
+                 ACK_SCAN_SIDS + XMAS_SCAN_SIDS +
                  FRAGMENTED_SCAN_SIDS + UDP_SCAN_SIDS)
 
 EVE_FILE = "/var/log/suricata/eve.json"
@@ -75,7 +75,7 @@ class MikroTikManager:
         try:
             if not self.ensure_connection():
                 return False
-          
+
             address_list = self.api.path('/ip/firewall/address-list')
 
             lists_to_check = [
@@ -83,11 +83,11 @@ class MikroTikManager:
                 ADDRESS_LIST_SCAN,
                 ADDRESS_LIST_EXPLOIT
             ]
-            
+
             for list_name in lists_to_check:
                 test_ip = "200.91.236.125"
                 comment = f"Test entry"
-                
+
                 try:
                     address_list.add(
                         list=list_name,
@@ -97,7 +97,7 @@ class MikroTikManager:
                     )
                     logger.info(f"Создан список '{list_name}'")
                     time.sleep(1)
-                    
+
                 except Exception as e:
                     if "already have" in str(e).lower():
                         logger.info(f"Список '{list_name}' уже существует")
@@ -129,7 +129,7 @@ class MikroTikManager:
                 comment += f" - Target:{dest_ip}"
 
             address_list = self.api.path('/ip/firewall/address-list')
-            
+
             address_list.add(
                 list=list_name,
                 address=ip,
@@ -159,27 +159,26 @@ class MikroTikManager:
                 return counts
 
             address_list = self.api.path('/ip/firewall/address-list')
-            
-            # Безопасное получение данных
+
             try:
                 items = list(address_list)
             except Exception as api_error:
-                # Ловим ошибку кодировки здесь
+
                 error_msg = str(api_error)
-                # Безопасное логирование ошибки
+
                 safe_error = error_msg.encode('utf-8', errors='replace').decode('utf-8')
                 logger.warning(f"Ошибка API при получении списков: {safe_error[:200]}")
                 return counts
-            
+
             for item in items:
                 list_name = item.get('list', '')
-                # Безопасное преобразование
+
                 if isinstance(list_name, bytes):
                     try:
                         list_name = list_name.decode('utf-8')
                     except UnicodeDecodeError:
                         list_name = list_name.decode('latin-1', errors='ignore')
-                
+
                 if list_name == ADDRESS_LIST_POOR_REP:
                     counts['poor_rep'] += 1
                 elif list_name == ADDRESS_LIST_SCAN:
@@ -188,7 +187,7 @@ class MikroTikManager:
                     counts['exploit'] += 1
 
         except Exception as e:
-            # БЕЗОПАСНОЕ логирование ошибки
+
             error_str = str(e)
             safe_error = error_str.encode('utf-8', errors='replace').decode('utf-8')
             logger.warning(f"Не удалось получить статистику: {safe_error[:200]}")
@@ -217,7 +216,7 @@ def is_external_ip(ip):
         '172.24.', '172.25.', '172.26.', '172.27.',
         '172.28.', '172.29.', '172.30.', '172.31.',
         '169.254.',
-        '224.', '225.', '226.', '227.', '228.', '229.', '230.', '231.', '232.', '233.', '234.', '235.', '236.', '237.', '238.', '239.',
+        '224.', '225.', '226.', '227.', '228.', '229.', '230.', '231.', '232.', '233.', '234.', '235.', '236.', '23   7.', '238.', '239.',
         '255.255.255.255',
     ]
 
@@ -288,17 +287,16 @@ def determine_alert_type(sid):
 def process_alerts(mikrotik, eve_file, state_file):
     try:
         logger.info("=== НАЧАЛО process_alerts ===")
-        
+
         if not os.path.exists(eve_file):
             logger.warning(f"Файл {eve_file} не найден")
             return 0
 
         last_pos = read_last_position(state_file)
         current_size = os.path.getsize(eve_file)
-        
+
         logger.info(f"Позиция: {last_pos}, Размер: {current_size}")
-        
-        # Если файл уменьшился (ротация)
+
         if current_size < last_pos:
             logger.info("Ротация логов, сбрасываю позицию")
             last_pos = 0
@@ -308,9 +306,9 @@ def process_alerts(mikrotik, eve_file, state_file):
             logger.info("Нет новых данных")
             return 0
 
-        # ВАЖНО: Ограничим количество читаемых данных за один цикл
+        # ограничение размера за цикл
         MAX_BYTES_PER_CYCLE = 10 * 1024 * 1024  # 10 MB максимум за цикл
-        
+
         bytes_to_read = min(current_size - last_pos, MAX_BYTES_PER_CYCLE)
         logger.info(f"Буду читать: {bytes_to_read} байт (макс {MAX_BYTES_PER_CYCLE})")
 
@@ -321,21 +319,19 @@ def process_alerts(mikrotik, eve_file, state_file):
 
         with open(eve_file, 'r', encoding='utf-8', errors='ignore') as f:
             f.seek(last_pos)
-            
-            # Читаем только до лимита
+
             while bytes_read < bytes_to_read:
                 line = f.readline()
-                if not line:  # Конец файла
+                if not line:
                     break
-                    
+
                 bytes_read += len(line)
                 line_count += 1
-                
-                # Лимит строк за цикл
+
                 if line_count > 5000:
                     logger.info(f"Достигнут лимит 5000 строк за цикл")
                     break
-                
+
                 try:
                     event = json.loads(line.strip())
                     if event.get('event_type') == 'alert':
@@ -344,7 +340,7 @@ def process_alerts(mikrotik, eve_file, state_file):
                         sid = alert.get('signature_id')
                         src_ip = event.get('src_ip')
                         dest_ip = event.get('dest_ip', 'N/A')
-                        
+
                         if sid and src_ip and is_external_ip(src_ip):
                             list_type, alert_type = determine_alert_type(sid)
                             if list_type:
@@ -352,14 +348,13 @@ def process_alerts(mikrotik, eve_file, state_file):
                                 if mikrotik.add_ip(src_ip, list_type, dest_ip, sid, alert_type):
                                     processed_count += 1
                                     time.sleep(0.05)
-                                    
+
                 except json.JSONDecodeError:
                     continue
                 except Exception as e:
                     logger.debug(f"Ошибка обработки строки: {e}")
                     continue
-        
-        # Сохраняем новую позицию
+
         if bytes_read > 0:
             new_position = last_pos + bytes_read
             save_position(new_position, state_file)
@@ -367,10 +362,10 @@ def process_alerts(mikrotik, eve_file, state_file):
             logger.info(f"Найдено алертов: {alerts_found}, Заблокировано: {processed_count}")
         else:
             logger.info("Не прочитано ни одного байта")
-        
+
         if processed_count > 0:
             logger.info(f"Добавлено {processed_count} новых IP в списки блокировки")
-        
+
         logger.info("=== КОНЕЦ process_alerts ===")
         return processed_count
 
@@ -449,7 +444,7 @@ def main():
 
                     if not os.path.exists(eve_file):
                         logger.warning(f"Файл логов пропал: {eve_file}")
-                        eve_file = find_eve_file() 
+                        eve_file = find_eve_file()
                         if os.path.exists(eve_file):
                             logger.info(f"Файл найден: {eve_file}")
 
