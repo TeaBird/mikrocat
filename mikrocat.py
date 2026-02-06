@@ -125,8 +125,8 @@ class MikroTikManager:
                 logger.error(f"Неизвестный тип списка: {list_type}")
                 return False
 
-            if dest_ip != "N/A":
-                comment += f" - Target:{dest_ip}"
+            #if dest_ip != "N/A":
+            #   comment += f" - Target:{dest_ip}"
 
             address_list = self.api.path('/ip/firewall/address-list')
 
