@@ -1,0 +1,23 @@
+[Unit]
+Description=MikroCat - Suricata IP Blocker for MikroTik
+After=network.target suricata.service
+Wants=network.target suricata.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/scripts/mikrocat
+ExecStart=/usr/bin/python3 /opt/scripts/mikrocat/mikrocat.py
+Restart=always
+RestartSec=10
+StartLimitInterval=0
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=mikrocat
+
+# Защита от fork-bomb
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
