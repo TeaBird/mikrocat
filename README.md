@@ -1,4 +1,5 @@
-# mikrocat
+# mikrocat <img width="40" height="40" alt="image" src="https://github.com/user-attachments/assets/8ce1a348-1d3b-4802-a33a-35ab0d6fcac0" />
+
 
 ## Назначение
 
